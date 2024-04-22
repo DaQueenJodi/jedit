@@ -10,14 +10,12 @@
   }:
   let
     pkgs = nixpkgs.legacyPackages.x86_64-linux;
-    zig = inputs.zig-overlay.packages.x86_64-linux.master-2024-04-12;
+    zig = inputs.zig-overlay.packages.x86_64-linux.master-2024-04-19;
   in
   {
     devShells.x86_64-linux.default = pkgs.mkShell {
       packages = with pkgs; [
         zig
-        pkg-config
-        notcurses
       ];
     };
   };
