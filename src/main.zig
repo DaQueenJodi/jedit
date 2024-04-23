@@ -44,7 +44,9 @@ pub fn main() !void {
         .windows_window = windows_window,
         .status_window = status_window,
     };
+    defer ctx.deinit(allocator);
     try ctx.loadDefaultWindow(allocator);
+
 
     while (!ctx.quit) {
         if (vx.tryEvent()) |event| {
@@ -73,6 +75,7 @@ pub fn panic(msg: []const u8, trace: ?*std.builtin.StackTrace, ret_addr: ?usize)
     std.builtin.default_panic(msg, trace, ret_addr);
 }
 const std = @import("std");
+const assert = std.debug.assert;
 const vaxis = @import("vaxis");
 const TextBuffer = @import("TextBuffer.zig");
 const Allocator = std.mem.Allocator;

@@ -13,6 +13,14 @@ const SplitFlavor = enum {
     horizontal,
 };
 
+pub fn deinit(ctx: *Ctx, allocator: Allocator) void {
+    for (ctx.text_splits.items) |*split| {
+        split.text_buffer.deinit(allocator);
+    }
+    ctx.text_splits.deinit(allocator);
+    ctx.* = undefined;
+}
+
 pub fn activeTextWindow(ctx: Ctx) *TextWindow {
     // gaurenteed to always have a window open
     assert(ctx.text_splits.items.len > 0);
@@ -22,50 +30,72 @@ pub fn activeTextWindow(ctx: Ctx) *TextWindow {
 pub fn handleKeyPress(ctx: *Ctx, allocator: Allocator, key: vaxis.Key) !void {
     switch (ctx.mode) {
         .normal => {
-            if (key.matches('q', .{}) or key.matches('c', .{ .ctrl = true })) {
-                ctx.quit = true;
-            } else if (key.matches('i', .{})) {
+            const active = ctx.activeTextWindow();
+            const tb = &active.text_buffer;
+            if (key.matches('i', .{})) {
                 ctx.mode = .insert;
+            } else if (key.matches('a', .{})) {
+                ctx.mode = .insert;
+                ctx.activeTextWindow().text_buffer.cursor_x += 1;
             } else if (key.matches(':', .{})) {
                 ctx.mode = .command;
                 ctx.status_buffer.text.len = 0;
                 ctx.status_buffer.text.append(':') catch unreachable;
                 // TODO handle going past end of the line/underflow
+            } else if (key.matches('x', .{})) {
+                    try ctx.activeTextWindow().text_buffer.deleteChar(allocator);
+            } else if (key.matches('w', .{.ctrl = true})) {
+                assert(ctx.text_splits.items.len > 0);
+                ctx.current_split_index = @intCast(@mod(ctx.current_split_index + 1, ctx.text_splits.items.len));
             } else if (key.matches('h', .{})) {
-                ctx.activeTextWindow().text_buffer.cursor_x -= 1;
+                tb.moveCursorLeft();
             } else if (key.matches('j', .{})) {
-                ctx.activeTextWindow().text_buffer.cursor_y += 1;
+                tb.moveCursorDown();
             } else if (key.matches('k', .{})) {
-                ctx.activeTextWindow().text_buffer.cursor_y -= 1;
+                tb.moveCursorUp();
             } else if (key.matches('l', .{})) {
-                ctx.activeTextWindow().text_buffer.cursor_x += 1;
+                tb.moveCursorRight();
             }
         },
         .insert => {
-            if (key.codepoint == vaxis.Key.escape) {
+            if (key.codepoint == vaxis.Key.escape or key.matches('c', .{.ctrl = true})) {
                 ctx.mode = .normal;
+                ctx.activeTextWindow().text_buffer.moveCursorLeft();
             } else if (key.codepoint == vaxis.Key.backspace) {
                 try ctx.activeTextWindow().text_buffer.deleteChar(allocator);
             } else if (key.codepoint == vaxis.Key.enter) {
                 try ctx.activeTextWindow().text_buffer.newline(allocator);
+            } else if (key.codepoint == vaxis.Key.tab) {
+                try ctx.activeTextWindow().text_buffer.writeChar(allocator, '\t');
             } else {
                 assert(std.ascii.isPrint(@intCast(key.codepoint)));
                 try ctx.activeTextWindow().text_buffer.writeChar(allocator, @intCast(key.codepoint));
             }
         },
         .command => {
-            if (key.codepoint == vaxis.Key.enter) {
+            if (key.matches('b', .{.ctrl = true})) {
+                ctx.status_buffer.cursor -|= 1;
+            } else if (key.matches('f', .{.ctrl = true})) {
+                ctx.status_buffer.cursor = @min(ctx.status_buffer.cursor + 1, ctx.status_buffer.text.len -| 1);
+            } else if (key.codepoint == vaxis.Key.enter) {
                 ctx.mode = .normal;
-                std.log.err("running command: '{s}'", .{ctx.status_buffer.text.slice()});
-                ctx.runCommand(allocator, ctx.status_buffer.text.slice()) catch |err| {
+                // cut off the colon
+                const command = ctx.status_buffer.text.slice()[1..];
+                assert(ctx.status_buffer.text.buffer[0] == ':');
+                std.log.info("running command: '{s}'", .{command});
+                ctx.runCommand(allocator, command) catch |err| {
                     ctx.status_buffer.text.len = 0;
-                    try ctx.status_buffer.text.writer().print("{}", .{err});
+                    try ctx.status_buffer.text.writer().print("could not execute command: {}", .{err});
                 };
+                ctx.status_buffer.cursor = 0;
             } else if (key.codepoint == vaxis.Key.backspace) {
                 if (ctx.status_buffer.cursor > 0) {
                     ctx.status_buffer.cursor -= 1;
                     // + 1 because we dont want to delete the semicolon
                     _ = ctx.status_buffer.text.orderedRemove(ctx.status_buffer.cursor + 1);
+                } else {
+                    ctx.mode = .normal;
+                    ctx.status_buffer.text.len = 0;
                 }
             } else {
                 // TODO: handle ctrl stuffs differently
@@ -80,6 +110,7 @@ pub fn handleKeyPress(ctx: *Ctx, allocator: Allocator, key: vaxis.Key) !void {
 }
 
 pub fn render(ctx: *Ctx) !void {
+    // TODO: render tabs as spaces
     // render text buffers
     for (ctx.text_splits.items) |text_split| {
         const tb = text_split.text_buffer;
@@ -104,14 +135,17 @@ pub fn render(ctx: *Ctx) !void {
             win.writeCell(0, y, tilda_cell);
         }
     }
-    // draw cursor
+    // render cursor
     // in command mode, draw it in the status buffer
     // in any other mode, draw it in the current text window
     const cursor_shape: vaxis.Cell.CursorShape = switch (ctx.mode) {
         .insert, .command => .beam,
         .normal => .block,
     };
-    if (ctx.mode == .command) {} else {
+    if (ctx.mode == .command) {
+        ctx.status_window.setCursorShape(cursor_shape);
+        ctx.status_window.showCursor(ctx.status_buffer.cursor + 1, 0);
+    } else {
         const tw = ctx.activeTextWindow();
         const tb = tw.text_buffer;
         tw.window.setCursorShape(cursor_shape);
@@ -140,8 +174,6 @@ pub fn render(ctx: *Ctx) !void {
 }
 
 pub fn addSplit(ctx: *Ctx, allocator: Allocator, file_path: ?[]const u8, flavor: SplitFlavor) !void {
-    // TODO: read string from file path if non-null
-    _ = file_path;
     const tw = ctx.activeTextWindow();
     const win = &tw.window;
 
@@ -150,7 +182,6 @@ pub fn addSplit(ctx: *Ctx, allocator: Allocator, file_path: ?[]const u8, flavor:
         .vertical => .{win.width, @divFloor(win.height, 2)},
     };
 
-    std.log.err("old: ({},{}); new: ({},{})", .{ win.width, win.height, new_width, new_height });
     win.* = ctx.windows_window.child(.{
         .x_off = win.x_off,
         .y_off = win.y_off,
@@ -169,32 +200,40 @@ pub fn addSplit(ctx: *Ctx, allocator: Allocator, file_path: ?[]const u8, flavor:
         .height = .{ .limit = new_height },
     });
 
+    const text_buffer = blk: {
+        if (file_path) |path| {
+            const str = try readOrCreateFile(allocator, path);
+            break :blk try TextBuffer.init(allocator, str orelse "");
+        } else {
+            break :blk try TextBuffer.init(allocator, "");
+        }
+    };
     try ctx.text_splits.append(allocator, .{
         .window = new_win,
-        .text_buffer = try TextBuffer.init(allocator, ""),
+        .text_buffer = text_buffer,
     });
 }
 
-const Command = enum {
-    sp, // hsplit
-    vsp, // vsplit
-};
-pub fn runCommand(ctx: *Ctx, allocator: Allocator, s: []const u8) !void {
-    var command_iter = std.mem.splitScalar(u8, s, ' ');
-    const command_str = command_iter.next() orelse return error.CommandNotFound;
-    const command = std.meta.stringToEnum(Command, command_str) orelse return error.CommandNotFoundasdjaisdja;
-    switch (command) {
-        inline .sp, .vsp => |t| {
-            const split_flavor: SplitFlavor = switch (t) {
-                .sp => .horizontal,
-                .vsp => .vertical,
-            };
-            try ctx.addSplit(allocator, command_iter.rest(), split_flavor);
-        },
-    }
+pub fn readOrCreateFile(allocator: Allocator, path: []const u8) !?[]const u8 {
+    const f = std.fs.cwd().openFile(path, .{}) catch |err| {
+        switch (err) {
+            error.FileNotFound => {
+                _ = try std.fs.cwd().createFile(path, .{});
+                return null;
+            },
+            else => |e| return e,
+        }
+    };
+    const stat = try f.stat();
+    const buf = try allocator.alloc(u8, stat.size);
+    _ = try f.readAll(buf);
+    return buf;
 }
 
 pub fn loadDefaultWindow(ctx: *Ctx, allocator: Allocator) !void {
+
+    assert(ctx.text_splits.items.len == 0);
+
     const win = ctx.windows_window;
     const child = win.child(.{
         .x_off = 0,
@@ -203,10 +242,10 @@ pub fn loadDefaultWindow(ctx: *Ctx, allocator: Allocator) !void {
         .height = .{ .limit = win.height },
     });
 
-    try ctx.text_splits.append(allocator, .{
+    ctx.text_splits.append(allocator, .{
         .text_buffer = try TextBuffer.init(allocator, ""),
         .window = child,
-    });
+    }) catch unreachable;
 }
 
 const Mode = enum {
@@ -228,3 +267,4 @@ const vaxis = @import("vaxis");
 const TextBuffer = @import("TextBuffer.zig");
 const Allocator = std.mem.Allocator;
 const StatusBuffer = @import("StatusBuffer.zig");
+const runCommand = @import("commands.zig").runCommand;
