@@ -47,7 +47,6 @@ pub fn main() !void {
     defer ctx.deinit(allocator);
     try ctx.loadDefaultWindow(allocator);
 
-
     while (!ctx.quit) {
         if (vx.tryEvent()) |event| {
             switch (event) {

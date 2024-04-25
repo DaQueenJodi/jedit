@@ -1,10 +1,12 @@
 [x] interactive command buffer
 [x] being able to actually move cursor in command buffer
-[ ] multi-key keybinding support
+[x] multi-key keybinding support
+[x] basic text objects
+[ ] add helper functions for text objects
 [x] a way to actually run commands
 [x] window splitting
 [x] basic editing in insert mode
 [ ] syntax highlighting (via treesitter)
 [ ] a way to save files
-[ ] maybe add gutters
+[ ] a way to close individual text splits
 [ ] visual mode

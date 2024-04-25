@@ -74,7 +74,7 @@ pub fn moveCursorLeft(tb: *TextBuffer) void {
     tb.cursor_x -|= 1;
 }
 pub fn moveCursorRight(tb: *TextBuffer) void {
-    tb.cursor_x = @intCast(@min(tb.cursor_x + 1, tb.currentLine().len -| 1));
+    tb.cursor_x = @intCast(@min(tb.cursor_x + 1, tb.currentLine().items.len -| 1));
 }
 pub fn moveCursorDown(tb: *TextBuffer) void {
     assert(tb.lines.items.len > 0);
@@ -87,15 +87,12 @@ pub fn moveCursorUp(tb: *TextBuffer) void {
 }
 
 fn clampCursorX(tb: *TextBuffer) void {
-    tb.cursor_x = @min(tb.cursor_x, tb.currentLine().len);
+    tb.cursor_x = @min(tb.cursor_x, tb.currentLine().items.len);
 }
 
-
-fn currentLine(tb: TextBuffer) []const u8 {
-    return tb.lines.items[tb.cursor_y].items;
+pub fn currentLine(tb: TextBuffer) *std.ArrayListUnmanaged(u8) {
+    return &tb.lines.items[tb.cursor_y];
 }
-
-const ncDie = @import("util.zig").ncDie;
 
 const std = @import("std");
 const vaxis = @import("vaxis");
