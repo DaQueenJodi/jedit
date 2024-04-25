@@ -6,6 +6,7 @@
 [x] a way to actually run commands
 [x] window splitting
 [x] basic editing in insert mode
+[ ] start rendering everything in segments (needed for expanding tab characters and syntax highlighting)
 [ ] syntax highlighting (via treesitter)
 [ ] a way to save files
 [ ] a way to close individual text splits
