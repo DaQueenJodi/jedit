@@ -7,6 +7,9 @@ pub fn runCommand(ctx: *Ctx, allocator: Allocator) E!void {
 
     ctx.mode = .normal;
 }
+pub fn enterNormalMode(ctx: *Ctx, _: Allocator) E!void {
+    ctx.mode = .normal;
+}
 
 const E = error{OutOfMemory};
 const Ctx = @import("../Ctx.zig");

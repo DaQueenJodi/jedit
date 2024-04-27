@@ -80,3 +80,4 @@ const TextBuffer = @import("TextBuffer.zig");
 const Allocator = std.mem.Allocator;
 const Ctx = @import("Ctx.zig");
 const STATUS_HEIGHT = 1;
+const ts = @import("treesitter");

@@ -8,12 +8,14 @@ pub const normal_keybinds = [_]KeyBind{
     bind("l", .none, all.cursorRight),
     bind("<C-w>", .key, normal.windowNamespace),
     bind("c", .text_object, normal.change),
+    bind("d", .text_object, normal.delete),
     bind(":", .none, normal.enterCommandMode),
 };
 pub const command_keybinds = [_]KeyBind{
     bind("<C-b>", .none, all.cursorLeft),
     bind("<C-f>", .none, all.cursorRight),
     bind("CR", .none, command.runCommand),
+    bind("ESC", .none, command.enterNormalMode),
 };
 pub const insert_keybinds = [_]KeyBind{
     bind("ESC", .none, insert.enterNormalMode),
@@ -129,8 +131,13 @@ const KeyBind = struct {
     }
 };
 
-pub const TextObject = enum {
-    w,
+pub const TextObject = union(enum) {
+    word,
+    letter,
+    end_of_line,
+    full_line,
+    find_until: u8,
+    find_including: u8,
 };
 
 const KeyBindHandlerState = union(enum) {
@@ -156,12 +163,15 @@ pub const KeyBindHandler = struct {
                 const current_str = cur.slice();
                 const last_char_idx = current_str.len - 1;
                 var found_partial = false;
-                inline for (std.meta.fields(TextObject)) |text_object| {
+                const text_object_strs = std.meta.fields(TextObjectTextRepresentation);
+                inline for (text_object_strs) |text_object| {
                     const str = text_object.name;
                     if (str[last_char_idx] == current_str[last_char_idx]) {
                         // if this was the last character of the text object
                         if (last_char_idx + 1 == str.len) {
-                            try function(ctx, allocator, @field(TextObject, str));
+                            const text_object_tag: std.meta.Tag(TextObject) = @enumFromInt(text_object.value);
+                            const actual_text_object = @unionInit(TextObject, @tagName(text_object_tag), {});
+                            try function(ctx, allocator, actual_text_object);
                             kbh.state = .waiting_for_keybinding;
                             kbh.function = undefined;
                         }
@@ -215,9 +225,35 @@ pub const KeyBindHandler = struct {
     }
 };
 
+const TextObjectTextRepresentation = blk: {
+    const TextObjectEnum = std.meta.Tag(TextObject);
+    const typeinfo = @typeInfo(TextObjectEnum).Enum;
+    var fields = std.BoundedArray(std.builtin.Type.EnumField, typeinfo.fields.len){};
+    for (typeinfo.fields) |field| {
+        const name = switch (@field(TextObject, field.name)) {
+            .word => "w",
+            .letter => "l",
+            .end_of_line => "$",
+            .full_line, .find_until, .find_including => continue,
+        };
+        fields.append(.{
+            .name = name,
+            .value = field.value,
+        }) catch unreachable;
+    }
+    break :blk @Type(.{
+        .Enum = .{
+            .tag_type = typeinfo.tag_type,
+            .fields = fields.slice(),
+            .decls = &.{},
+            .is_exhaustive = true,
+        }
+    });
+};
+
 const MAX_TEXT_OBJECT_LEN = blk: {
     var max = 0;
-    for (@typeInfo(TextObject).Enum.fields) |text_object| {
+    for (@typeInfo(TextObjectTextRepresentation).Enum.fields) |text_object| {
         const len = text_object.name.len;
         if (len > max) max = len;
     }

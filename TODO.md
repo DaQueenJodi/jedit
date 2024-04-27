@@ -6,9 +6,9 @@
 [x] a way to actually run commands
 [x] window splitting
 [x] basic editing in insert mode
-[ ] start rendering everything in segments (needed for expanding tab characters and syntax highlighting)
-[ ] vendor our own libvaxis so that I can make rendering text easier without allocations
-[ ] syntax highlighting (via treesitter)
+[x] start rendering everything in segments (needed for expanding tab characters and syntax highlighting)
+[x] vendor our own libvaxis so that I can make rendering text easier without allocations
+[x] syntax highlighting (via treesitter)
 [ ] a way to save files
 [ ] a way to close individual text splits
 [ ] visual mode
