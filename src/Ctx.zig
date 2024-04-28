@@ -110,11 +110,15 @@ fn readArraylist(arraylist_2d_opaque: ?*anyopaque, _: u32, pos: ts.TSPoint, read
 }
 
 const TokensToHighlight = enum {
-    INTEGER,
-    IDENTIFIER,
-    _STRINGLITERAL,
-    FLOAT,
-    CHAR_LITERAL,
+    attribute,
+    keyword,
+    @"type",
+    variable,
+    constant,
+    comment,
+    string,
+    number,
+
 };
 const HighlightRange = struct {
     start: ts.TSPoint,
@@ -127,8 +131,64 @@ fn storeTokensToHighlight(tokens: *std.BoundedArray(HighlightRange, 1_000), node
         .start = node.startPoint(),
         .end = node.endPoint(),
         .flavor = flavor,
-    }) catch @panic("whoopsy");
+    }) catch unreachable;
 }
+
+pub fn windowPrint(win: vaxis.Window, text: []const u8, style: vaxis.Cell.Style, row_off: u32, column_off: u32) !void {
+    const res = try win.print(&.{.{
+        .text = text,
+        .style = style,
+    }}, .{ .row_offset = row_off, .column_offset = column_off, .wrap = .none });
+    assert(!res.overflow);
+}
+pub fn renderFromTo(tw: TextWindow, start: ts.TSPoint, end: ts.TSPoint, style: vaxis.Cell.Style) !void {
+    const win = tw.window;
+    const lines = tw.text_buffer.lines;
+
+    // if it's the same tile, just write the cell
+    if (std.meta.eql(start, end)) {
+        const text: []const u8 = (&lines.items[start.row].items[start.column])[0..1];
+
+        //std.log.info("wrote single character: {s}", .{text});
+        try windowPrint(win, text, style, start.row, start.column);
+        return;
+    }
+
+    assert(start.row < end.row or start.column < end.column);
+
+    // print partial first line
+    // if the end is on the same row, we just draw up to it's end collumn and that's all
+    if (start.row == end.row) {
+        //std.log.info("wrote single partial line: '{s}'", .{lines.items[start.row].items[start.column..end.column]});
+        const text = lines.items[start.row].items[start.column..end.column];
+        try windowPrint(win, text, style, start.row, start.column);
+
+        return;
+    }
+    // otherwise, we draw the entire rest of the line
+    {
+        const text = lines.items[start.row].items[start.column..];
+        //std.log.info("wrote partial line: '{s}'", .{lines.items[start.row].items[start.column..]});
+        try windowPrint(win, text, style, start.row, start.column);
+        // and the rest of the full rows
+    }
+
+    for (start.row + 1..end.row) |y| {
+        const text = lines.items[y].items;
+        //std.log.info("wrote full line: '{s}'", .{text});
+        try windowPrint(win, text, style, @intCast(y), 0);
+    }
+
+    {
+        // and finally, render the rest of the row if there is anything left
+        if (end.column > 0) {
+            const text = lines.items[end.row].items[0..end.column];
+            //std.log.info("wrote last partial row: '{s}'", .{text});
+            try windowPrint(win, text, style, end.row, 0);
+        }
+    }
+}
+
 pub fn render(ctx: *Ctx) !void {
     const parser = try ts.TSParser.new();
     defer parser.delete();
@@ -142,12 +202,48 @@ pub fn render(ctx: *Ctx) !void {
         readArraylist,
     );
 
-    var tokens_to_highlight = std.BoundedArray(HighlightRange, 1_000){};
+    var ranges_to_highlight = std.BoundedArray(HighlightRange, 1_000){};
     const root_node = tree.rootNode();
-    traverseNodeWithCallback(&tokens_to_highlight, root_node, storeTokensToHighlight);
+
+    var error_offset: u32 = undefined;
+    var query = ts.TSQuery.new(tree_sitter_zig(), @embedFile("grammars/zig.scm"), &error_offset) catch |err| {
+        std.debug.panic("failed to parse query file at offset {}: {}", .{error_offset, err});
+    };
+    defer query.delete();
+    var query_cursor = try ts.TSQueryCursor.new();
+    query_cursor.exec(query, root_node);
+    while (query_cursor.nextMatch()) |match| {
+
+        for (match.captures[0..match.capture_count]) |capture| {
+            const name = query.captureNameForId(capture.index);
+            const first_part_idx = std.mem.indexOfScalar(u8, name, '.') orelse name.len;
+            const first_part = name[0..first_part_idx];
+
+            const flavor = std.meta.stringToEnum(TokensToHighlight, first_part) orelse continue;
+
+            const node: ts.TSNode = .{
+                .inner = capture.node,
+            };
+            const start = node.startPoint();
+            const end = node.endPoint();
+            if (ranges_to_highlight.popOrNull()) |range| {
+                ranges_to_highlight.append(range) catch unreachable;
+                // skip duplicates
+                if (std.meta.eql(range.start, start)) {
+                    continue;
+                }
+            }
+            try ranges_to_highlight.append(.{
+                .start = start,
+                .end = end,
+                .flavor = flavor,
+            });
+        }
+    }
+
     std.mem.sort(
         HighlightRange,
-        tokens_to_highlight.slice(),
+        ranges_to_highlight.slice(),
         {},
         struct {
             // we make this backwards because we want to pop from the front
@@ -165,88 +261,49 @@ pub fn render(ctx: *Ctx) !void {
     for (ctx.text_splits.items) |text_split| {
         const tb = text_split.text_buffer;
         const win = text_split.window;
+        if (tb.lines.items.len > 0) {
+            var curr_row: u32 = 0;
+            var curr_column: u32 = 0;
+            while (ranges_to_highlight.popOrNull()) |range| {
+                std.log.info("{}", .{range});
 
-        var last_y: u32 = 0;
-        var last_x: u32 = 0;
-        while (tokens_to_highlight.popOrNull()) |range| {
-            std.log.info("highlighting: {}", .{range});
-            // print the stuff until we get to the row of the highlight range
-
-            std.log.info("printing non-highlighted for {d} rows, starting at row: {d}", .{range.start.row - last_y, last_y});
-            if (range.start.row > last_y) last_x = 0;
-            for (last_y..range.start.row) |y| {
-                _ = try win.print(
-                    &.{
-                        .{ .text = tb.lines.items[y].items },
-                    },
-                    .{ .row_offset = y },
-                );
-            }
-            last_y = range.start.row;
-            // print stuff until we get to the column of the highlight range
-            std.log.info("printing non-highlighted stuff for {d} columns, starting at column: {d}", .{range.start.column - last_x, last_x});
-            _ = try win.print(
-                &.{
-                    .{ .text = tb.lines.items[last_y].items[last_x..range.start.column] },
-                },
-                .{ .row_offset = last_y, .column_offset = last_x },
-            );
-
-            const highlight_color: [3]u8 = switch (range.flavor) {
-                .IDENTIFIER => .{ 0xAA, 0, 0 },
-                .INTEGER, .CHAR_LITERAL, .FLOAT, ._STRINGLITERAL => .{ 0, 0xAA, 0 },
-            };
-
-            // print each full line of the highlight range
-            std.log.info("printing highlighted stuff for {d} rows, starting at row: {d}", .{range.end.row - last_y, last_y});
-            for (last_y..range.end.row) |y| {
-                _ = try win.print(
-                    &.{
-                        .{
-                            .text = tb.lines.items[y].items,
-                            .style = .{
-                                .fg = .{ .rgb = highlight_color },
-                            },
+                const highlight_style: vaxis.Cell.Style = .{
+                    .fg = .{
+                        .rgb = switch (range.flavor) {
+                            .attribute, .keyword => .{0xFF, 0x00, 0xFF},
+                            .type => .{0xCC, 0xCC, 0x00},
+                            .variable, .constant => .{0xFF, 0x00, 0x00},
+                            .comment, .string, .number => .{0x00, 0xFF, 0x00},
                         },
                     },
-                    .{ .row_offset = y },
-                );
-            }
-            last_y = @intCast(@min(range.end.row, tb.lines.items.len -| 1));
+                };
 
-            // print the rest of the line of the highlighted range
-            std.log.info("printing highlighted stuff for {d} columns, starting at column: {d}", .{range.end.column - range.start.column, range.start.column});
-            _ = try win.print(
-                &.{
-                    .{
-                        .text = tb.lines.items[last_y].items[range.start.column..range.end.column],
-                        .style = .{
-                            .fg = .{ .rgb = highlight_color },
-                        },
-                    },
-                },
-                .{ .row_offset = last_y, .column_offset = range.start.column },
-            );
-            last_x = range.end.column;
+                //std.log.info("unhighlighted: start: {},{}; end: {},{}", .{ curr_row, curr_column, range.start.row, range.start.column });
+                try renderFromTo(text_split, .{ .row = curr_row, .column = curr_column }, range.start, .{});
+                //std.log.info("highlighted: start: {},{}; end: {},{}", .{ range.start.row, range.start.column, range.end.row, range.end.column });
+                try renderFromTo(text_split, range.start, range.end, highlight_style);
+
+                curr_row = range.end.row;
+                curr_column = range.end.column;
+            }
+
+            assert(tb.lines.items.len > 0);
+            const line_count: u32 = @intCast(tb.lines.items.len);
+            const last_line_len: u32 = @intCast(tb.lines.items[line_count - 1].items.len);
+            const end_row = line_count - 1;
+            const end_column = last_line_len;
+            if (curr_row < end_row or (curr_row == end_row and curr_column < end_column)) {
+                //std.log.info("unhighlighted: start: {},{}; end: {},{}", .{ curr_row, curr_column, end_row, end_column });
+                try renderFromTo(text_split, .{ .row = curr_row, .column = curr_column }, .{ .row = end_row, .column = end_column }, .{});
+            }
         }
-
-        // render anything remaining on the current line
-
-        _ = try win.print(
-            &.{
-                .{
-                    .text = tb.lines.items[last_y].items[last_x..],
-                },
-            },
-            .{ .row_offset = last_y, .column_offset = last_x },
-        );
 
         if (false) unreachable;
 
         // render tildas
         const tildas_count = ctx.windows_window.height - tb.lines.items.len;
         const tilda_cell = vaxis.Cell{
-            .char = .{ .grapheme = "~", .width = 1 },
+            .char = .{ .grapheme = "~" },
             .style = .{
                 .fg = .{ .rgb = .{ 0xCC, 0xCC, 0xCC } },
             },
@@ -360,9 +417,8 @@ pub fn loadDefaultWindow(ctx: *Ctx, allocator: Allocator) !void {
         .width = .{ .limit = win.width },
         .height = .{ .limit = win.height },
     });
-
     ctx.text_splits.append(allocator, .{
-        .text_buffer = try TextBuffer.init(allocator, "const foo = 10;\nvar bar = 20;"),
+        .text_buffer = try TextBuffer.init(allocator, ""),
         .window = child,
     }) catch unreachable;
 }

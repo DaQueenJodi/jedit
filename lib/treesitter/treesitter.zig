@@ -1,5 +1,7 @@
 pub const TSPoint = ts.TSPoint;
 pub const TSLanguage = ts.TSLanguage;
+pub const TSQueryMatch = ts.TSQueryMatch;
+
 pub const TSParser = struct {
     inner: *ts.TSParser,
     pub fn new() !TSParser {
@@ -13,16 +15,27 @@ pub const TSParser = struct {
     pub fn parseString(parser: TSParser, old_tree: ?TSTree, source: []const u8) !TSTree {
         const tree_ptr = if (old_tree) |t| t.inner else null;
         return .{
-            .inner = ts.ts_parser_parse_string(parser.inner, tree_ptr, source.ptr, @intCast(source.len),) orelse return error.FailedToParseString,
+            .inner = ts.ts_parser_parse_string(
+                parser.inner,
+                tree_ptr,
+                source.ptr,
+                @intCast(source.len),
+            ) orelse return error.FailedToParseString,
         };
     }
     const Encoding = enum {
         utf8,
         utf16,
     };
-    pub fn parse(parser: TSParser, old_tree: ?TSTree, encoding: Encoding, payload: ?*anyopaque, callback: *const fn (?*anyopaque, u32, TSPoint, ?*u32) callconv(.C) [*]const u8,) !TSTree {
+    pub fn parse(
+        parser: TSParser,
+        old_tree: ?TSTree,
+        encoding: Encoding,
+        payload: ?*anyopaque,
+        callback: *const fn (?*anyopaque, u32, TSPoint, ?*u32) callconv(.C) [*]const u8,
+    ) !TSTree {
         const tree_ptr = if (old_tree) |t| t.inner else null;
-        const input: ts.TSInput  = .{
+        const input: ts.TSInput = .{
             .payload = payload,
             .read = callback,
             .encoding = switch (encoding) {
@@ -36,6 +49,57 @@ pub const TSParser = struct {
     }
     pub fn delete(parser: TSParser) void {
         ts.ts_parser_delete(parser.inner);
+    }
+};
+
+pub const TSQuery = struct {
+    inner: *ts.TSQuery,
+    const E = error{ none, syntax, node_type, field, capture, structure, language };
+    pub fn new(language: *const TSLanguage, source: []const u8, error_offset: *u32) E!TSQuery {
+        var error_type: ts.TSQueryError = undefined;
+        const inner = ts.ts_query_new(language, source.ptr, @intCast(source.len), error_offset, &error_type);
+        if (inner) |i| {
+            return .{
+                .inner = i,
+            };
+        }
+        return switch (error_type) {
+            ts.TSQueryErrorNone => error.none,
+            ts.TSQueryErrorSyntax => error.syntax,
+            ts.TSQueryErrorNodeType => error.node_type,
+            ts.TSQueryErrorField => error.field,
+            ts.TSQueryErrorCapture => error.capture,
+            ts.TSQueryErrorStructure => error.structure,
+            ts.TSQueryErrorLanguage => error.language,
+            else => unreachable,
+        };
+    }
+    pub fn delete(query: TSQuery) void {
+        ts.ts_query_delete(query.inner);
+    }
+    pub fn captureNameForId(query: TSQuery, index: u32) []const u8 {
+        var len: u32 = undefined;
+        const str = ts.ts_query_capture_name_for_id(query.inner, index, &len);
+        return str[0..len];
+    }
+};
+
+pub const TSQueryCursor = struct {
+    inner: *ts.TSQueryCursor,
+    pub fn new() !TSQueryCursor {
+        return .{
+            .inner = ts.ts_query_cursor_new() orelse return error.FailedToCreateQueryCursor,
+        };
+    }
+    pub fn exec(cursor: *TSQueryCursor, query: TSQuery, node: TSNode) void {
+        ts.ts_query_cursor_exec(cursor.inner, query.inner, node.inner);
+    }
+    pub fn nextMatch(cursor: TSQueryCursor) ?TSQueryMatch {
+        var match: TSQueryMatch = undefined;
+        if (ts.ts_query_cursor_next_match(cursor.inner, &match)) {
+            return match;
+        }
+        return null;
     }
 };
 

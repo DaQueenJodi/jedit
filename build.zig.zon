@@ -18,9 +18,9 @@
         .vaxis = .{
             .path = "lib/vaxis",
         },
-				.treesitter = .{
-					.path = "lib/treesitter",
-				},
+        .treesitter = .{
+            .path = "lib/treesitter",
+        },
         .@"treesitter-zig" = .{
             .url = "git+https://github.com/maxxnino/tree-sitter-zig#0d08703e4c3f426ec61695d7617415fff97029bd",
             .hash = "1220dd9604971e00571f9484632e98529e2464025939850765b9fe9c8b4852352873",

@@ -1,5 +1,5 @@
 pub fn build(b: *std.Build) void {
-    const llvm = b.option(bool, "llvm", "") orelse false;
+    const llvm = b.option(bool, "llvm", "") orelse true;
 
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
@@ -17,7 +17,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
     exe.root_module.addImport("vaxis", vaxis_dep.module("vaxis"));
-
 
     // set up tree sitter stuff
     const ts_dep = b.dependency("treesitter", .{
