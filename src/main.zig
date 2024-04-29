@@ -71,7 +71,8 @@ pub fn panic(msg: []const u8, trace: ?*std.builtin.StackTrace, ret_addr: ?usize)
         vx.stopReadThread();
         vx.deinit(null);
     }
-    std.builtin.default_panic(msg, trace, ret_addr);
+    // inline so that it doesnt show up in the stack trace
+    @call(.always_inline, std.builtin.default_panic, .{ msg, trace, ret_addr });
 }
 const std = @import("std");
 const assert = std.debug.assert;

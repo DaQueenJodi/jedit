@@ -10,6 +10,7 @@ pub const normal_keybinds = [_]KeyBind{
     bind("c", .text_object, normal.change),
     bind("d", .text_object, normal.delete),
     bind(":", .none, normal.enterCommandMode),
+    bind("<C-c>", .none, normal.displayCellInfo),
 };
 pub const command_keybinds = [_]KeyBind{
     bind("<C-b>", .none, all.cursorLeft),
@@ -241,14 +242,12 @@ const TextObjectTextRepresentation = blk: {
             .value = field.value,
         }) catch unreachable;
     }
-    break :blk @Type(.{
-        .Enum = .{
-            .tag_type = typeinfo.tag_type,
-            .fields = fields.slice(),
-            .decls = &.{},
-            .is_exhaustive = true,
-        }
-    });
+    break :blk @Type(.{ .Enum = .{
+        .tag_type = typeinfo.tag_type,
+        .fields = fields.slice(),
+        .decls = &.{},
+        .is_exhaustive = true,
+    } });
 };
 
 const MAX_TEXT_OBJECT_LEN = blk: {

@@ -1,3 +1,11 @@
+pub fn displayCellInfo(ctx: *Ctx, _: Allocator) E!void {
+    ctx.status_buffer.text.len = 0;
+    const tw = ctx.activeTextWindow();
+    const win = tw.window;
+    const tb = tw.text_buffer;
+    const cell = win.readCell(tb.cursor_x, tb.cursor_y).?;
+    ctx.status_buffer.text.writer().print("Cell{{ char: {s}, fg: {}, bg:  {} }}", .{ cell.char.grapheme, cell.style.fg, cell.style.bg }) catch @panic("welp");
+}
 pub fn enterInsertMode(ctx: *Ctx, _: Allocator) E!void {
     ctx.mode = .insert;
 }
